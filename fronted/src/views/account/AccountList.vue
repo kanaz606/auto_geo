@@ -4,18 +4,15 @@
     <div class="toolbar">
       <div class="toolbar-left">
         <el-select v-model="filterPlatform" placeholder="筛选平台" clearable style="width: 150px">
-          <el-option
-            v-for="platform in platforms"
-            :key="platform.id"
-            :label="platform.name"
-            :value="platform.id"
-          />
+          <el-option label="知乎" value="zhihu" />
+          <el-option label="百家号" value="baijiahao" />
+          <el-option label="今日头条" value="toutiao" />
+          <el-option label="搜狐号" value="sohu" />
         </el-select>
       </div>
       <div class="toolbar-right">
         <el-button type="primary" @click="showAddDialog">
-          <el-icon><Plus /></el-icon>
-          添加账号
+          <el-icon><Plus /></el-icon> 添加账号
         </el-button>
       </div>
     </div>
@@ -26,406 +23,345 @@
         v-for="account in filteredAccounts"
         :key="account.id"
         class="account-card"
-        :class="{ selected: selectedAccountIds.includes(account.id) }"
-        @click="toggleSelection(account.id)"
       >
         <div class="account-header">
-          <div class="platform-icon" :style="{ background: getPlatformColor(account.platform) }">
-            {{ getPlatformCode(account.platform) }}
+          <div class="platform-icon" :class="account.platform">
+            {{ getPlatformName(account.platform).substring(0,1) }}
           </div>
-          <div class="status-dot" :class="getStatusClass(account.status)"></div>
+          <div class="status-dot" :class="account.status === 1 ? 'online' : 'offline'"></div>
         </div>
+        
         <h3 class="account-name">{{ account.account_name }}</h3>
         <p class="account-username">{{ account.username ? '@' + account.username : '已授权' }}</p>
         <p class="account-platform">{{ getPlatformName(account.platform) }}</p>
 
-        <div class="account-actions" @click.stop>
+        <div class="account-actions">
           <el-button
             v-if="account.status !== 1"
-            type="primary"
+            type="warning"
             size="small"
-            @click="startAuth(account)"
+            plain
+            @click="handleReAuth(account)"
           >
             去授权
           </el-button>
           <el-button size="small" @click="editAccount(account)">编辑</el-button>
-          <el-button type="danger" size="small" @click="deleteAccount(account)">删除</el-button>
+          <el-button type="danger" size="small" text @click="deleteAccount(account)">删除</el-button>
         </div>
       </div>
 
-      <!-- 添加账号卡片 -->
+      <!-- 空状态或添加卡片 -->
       <div class="account-card add-card" @click="showAddDialog">
-        <div class="add-icon">
-          <el-icon><Plus /></el-icon>
-        </div>
-        <p>添加账号</p>
+        <div class="add-icon"><el-icon><Plus /></el-icon></div>
+        <p>添加新账号</p>
       </div>
     </div>
 
-    <!-- 添加/编辑对话框 -->
+    <!-- 添加/授权对话框 (核心逻辑) -->
     <el-dialog
       v-model="dialogVisible"
-      :title="isEdit ? '编辑账号' : '添加账号'"
+      :title="dialogTitle"
       width="500px"
+      :close-on-click-modal="false"
+      @close="resetForm"
     >
-      <el-form :model="formData" label-width="80px">
-        <el-form-item label="平台">
-          <el-select v-model="formData.platform" placeholder="选择平台" :disabled="isEdit">
-            <el-option
-              v-for="platform in platforms"
-              :key="platform.id"
-              :label="platform.name"
-              :value="platform.id"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="账号名称">
-          <el-input v-model="formData.account_name" placeholder="请输入备注名称（用于识别账号）" />
-        </el-form-item>
-        <el-form-item label="备注">
-          <el-input v-model="formData.remark" type="textarea" placeholder="可选" />
-        </el-form-item>
-      </el-form>
+      <!-- 阶段1：填写信息 -->
+      <div v-if="!authStep" class="form-step">
+        <el-form :model="formData" label-width="80px">
+          <el-form-item label="平台">
+            <el-select v-model="formData.platform" placeholder="选择平台" :disabled="isEdit" style="width: 100%">
+              <el-option label="知乎" value="zhihu" />
+              <el-option label="百家号" value="baijiahao" />
+              <el-option label="今日头条" value="toutiao" />
+              <el-option label="搜狐号" value="sohu" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="名称">
+            <el-input v-model="formData.account_name" placeholder="备注名称 (如: 知乎大号)" />
+          </el-form-item>
+          <el-form-item label="备注">
+            <el-input v-model="formData.remark" type="textarea" placeholder="选填" />
+          </el-form-item>
+        </el-form>
+      </div>
+
+      <!-- 阶段2：等待授权 -->
+      <div v-else class="auth-step">
+        <div class="loading-container">
+          <el-icon class="is-loading" size="40" color="#409eff"><Loading /></el-icon>
+          <h3>正在等待登录...</h3>
+          <p>浏览器已打开，请在弹出的窗口中扫码登录</p>
+          <p class="sub-text">登录成功后，此窗口会自动关闭</p>
+        </div>
+      </div>
+
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button v-if="isEdit" type="primary" @click="saveAccount">保存</el-button>
-        <el-button v-else type="primary" @click="authNewAccount">去授权登录</el-button>
+        <span class="dialog-footer">
+          <el-button @click="dialogVisible = false" :disabled="authStep">取消</el-button>
+          
+          <!-- 编辑模式下只保存信息 -->
+          <el-button v-if="isEdit && !authStep" type="primary" @click="saveAccountInfo">
+            保存信息
+          </el-button>
+          
+          <!-- 添加模式或重新授权模式 -->
+          <el-button v-if="!isEdit || authStep" type="primary" :loading="loading" @click="startAuthProcess">
+            {{ authStep ? '等待中...' : '启动浏览器授权' }}
+          </el-button>
+        </span>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { Plus } from '@element-plus/icons-vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { Plus, Loading } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { useAccountStore } from '@/stores/modules/account'
-import { PLATFORMS } from '@/core/config/platform'
+import { accountApi } from '@/services/api' // 直接使用 API 避免 store 逻辑复杂化
 
-const accountStore = useAccountStore()
-
-// 平台列表
-const platforms = Object.values(PLATFORMS)
-
-// 筛选
+// 状态
+const accounts = ref<any[]>([])
 const filterPlatform = ref('')
-
-// 对话框
 const dialogVisible = ref(false)
 const isEdit = ref(false)
-const editingAccountId = ref<number | null>(null)
+const authStep = ref(false) // 是否处于授权等待阶段
+const loading = ref(false)
+const pollTimer = ref<any>(null)
 
-// 表单数据
 const formData = ref({
-  platform: '',
+  id: null as number | null,
+  platform: 'zhihu',
   account_name: '',
   remark: '',
 })
 
 // 计算属性
 const filteredAccounts = computed(() => {
-  if (!filterPlatform.value) return accountStore.accounts
-  return accountStore.accounts.filter(acc => acc.platform === filterPlatform.value)
+  if (!filterPlatform.value) return accounts.value
+  return accounts.value.filter(acc => acc.platform === filterPlatform.value)
 })
 
-const selectedAccountIds = computed(() => accountStore.selectedAccountIds)
-
-// 加载数据
-onMounted(() => {
-  accountStore.loadAccounts()
+const dialogTitle = computed(() => {
+  if (authStep.value) return '正在授权'
+  return isEdit.value ? '编辑账号' : '添加账号'
 })
 
-// 方法
+// 加载列表
+const loadAccounts = async () => {
+  try {
+    const res: any = await accountApi.getList()
+    accounts.value = Array.isArray(res) ? res : []
+  } catch (e) { console.error(e) }
+}
+
+// 打开添加
 const showAddDialog = () => {
   isEdit.value = false
-  editingAccountId.value = null
-  formData.value = { platform: '', account_name: '', remark: '' }
+  authStep.value = false
+  formData.value = { id: null, platform: 'zhihu', account_name: '', remark: '' }
   dialogVisible.value = true
 }
 
-const editAccount = (account: any) => {
+// 编辑信息
+const editAccount = (acc: any) => {
   isEdit.value = true
-  editingAccountId.value = account.id
+  authStep.value = false
   formData.value = {
-    platform: account.platform,
-    account_name: account.account_name,
-    remark: account.remark || '',
+    id: acc.id,
+    platform: acc.platform,
+    account_name: acc.account_name,
+    remark: acc.remark
   }
   dialogVisible.value = true
 }
 
-const saveAccount = async () => {
-  if (!formData.value.platform || !formData.value.account_name) {
-    ElMessage.warning('请填写必填项')
-    return
+// 重新授权
+const handleReAuth = (acc: any) => {
+  isEdit.value = false // 视为新授权流程，但带ID
+  authStep.value = false
+  formData.value = {
+    id: acc.id,
+    platform: acc.platform,
+    account_name: acc.account_name,
+    remark: acc.remark
   }
-
-  const result = isEdit.value
-    ? await accountStore.updateAccount(editingAccountId.value!, formData.value)
-    : await accountStore.createAccount(formData.value)
-
-  if (result.success) {
-    ElMessage.success(isEdit.value ? '更新成功' : '添加成功')
-    dialogVisible.value = false
-    accountStore.loadAccounts()
-  } else {
-    ElMessage.error(result.message || '操作失败')
-  }
+  dialogVisible.value = true
 }
 
-/**
- * 授权新账号
- * 我修改了：现在直接授权，不需要先创建账号！
- */
-const authNewAccount = async () => {
-  if (!formData.value.platform) {
-    ElMessage.warning('请选择平台')
-    return
-  }
-
-  const accountName = formData.value.account_name || `${PLATFORMS[formData.value.platform]?.name}账号`
-
-  const result = await accountStore.startAuth(formData.value.platform, undefined, accountName)
-  if (result.success) {
-    dialogVisible.value = false
-    ElMessage.success('授权窗口已打开，请在窗口中完成登录后点击"授权完成"按钮')
-
-    // 轮询检查授权状态
-    const checkInterval = setInterval(async () => {
-      const status = await accountStore.checkAuthStatus(result.taskId)
-      if (status.status === 'success') {
-        clearInterval(checkInterval)
-        ElMessage.success('授权成功！账号已自动保存')
-        // 账号列表已在 checkAuthStatus 中自动刷新
-      } else if (status.status === 'failed' || status.status === 'timeout') {
-        clearInterval(checkInterval)
-        ElMessage.error(status.message || '授权失败，请重试')
-      }
-    }, 2000)
-  } else {
-    ElMessage.error(result.message || '授权启动失败')
-  }
-}
-
-const deleteAccount = async (account: any) => {
+// 保存纯文本信息 (不涉及浏览器)
+const saveAccountInfo = async () => {
+  if (!formData.value.id) return
   try {
-    await ElMessageBox.confirm(`确定要删除账号"${account.account_name}"吗？`, '确认删除', {
-      type: 'warning',
+    await accountApi.update(formData.value.id, {
+      account_name: formData.value.account_name,
+      remark: formData.value.remark
+    })
+    ElMessage.success('更新成功')
+    dialogVisible.value = false
+    loadAccounts()
+  } catch (e) { ElMessage.error('更新失败') }
+}
+
+// 启动授权流程 (核心逻辑)
+const startAuthProcess = async () => {
+  if (authStep.value) return // 防止重复点击
+
+  if (!formData.value.account_name) {
+    formData.value.account_name = `${getPlatformName(formData.value.platform)}账号`
+  }
+
+  loading.value = true
+  try {
+    // 调用后端启动浏览器
+    const res: any = await accountApi.startAuth({
+      platform: formData.value.platform,
+      account_name: formData.value.account_name,
+      account_id: formData.value.id || undefined
     })
 
-    const result = await accountStore.deleteAccount(account.id)
-    if (result.success) {
-      ElMessage.success('删除成功')
+    if (res.task_id) {
+      authStep.value = true
+      startPolling(res.task_id) // 开始轮询
     } else {
-      ElMessage.error(result.message || '删除失败')
+      ElMessage.error(res.message || '启动浏览器失败')
     }
-  } catch {
-    // 用户取消
+  } catch (e) {
+    ElMessage.error('请求失败，请检查后端是否启动')
+  } finally {
+    loading.value = false
   }
 }
 
-const startAuth = async (account: any) => {
-  const result = await accountStore.startAuth(account.platform, account.id)
-  if (result.success) {
-    dialogVisible.value = false
-    ElMessage.success('授权窗口已打开，请在窗口中完成登录后点击"授权完成"按钮')
-
-    // 轮询检查授权状态
-    const checkInterval = setInterval(async () => {
-      const status = await accountStore.checkAuthStatus(result.taskId)
-      if (status.status === 'success') {
-        clearInterval(checkInterval)
-        ElMessage.success('授权成功！账号已自动更新')
-        // 账号列表已在 checkAuthStatus 中自动刷新
-      } else if (status.status === 'failed' || status.status === 'timeout') {
-        clearInterval(checkInterval)
-        ElMessage.error(status.message || '授权失败，请重试')
+// 轮询检查状态
+const startPolling = (taskId: string) => {
+  if (pollTimer.value) clearInterval(pollTimer.value)
+  
+  pollTimer.value = setInterval(async () => {
+    try {
+      const res: any = await accountApi.getAuthStatus(taskId)
+      
+      if (res.status === 'success') {
+        clearInterval(pollTimer.value)
+        ElMessage.success('授权成功！')
+        dialogVisible.value = false
+        loadAccounts()
+      } else if (res.status === 'failed' || res.status === 'timeout') {
+        clearInterval(pollTimer.value)
+        authStep.value = false
+        ElMessage.error(res.message || '授权失败')
       }
-    }, 2000)
-  } else {
-    ElMessage.error(result.message || '授权启动失败')
+    } catch (error: any) {
+      // 🌟 核心修复：如果后端返回 404 (任务丢失)，立即停止轮询
+      if (error.response && error.response.status === 404) {
+        console.warn('任务已失效，停止轮询')
+        clearInterval(pollTimer.value)
+        authStep.value = false
+        ElMessage.warning('授权会话已过期，请重试')
+      }
+    }
+  }, 2000)
+}
+
+// 修改 deleteAccount 函数
+const deleteAccount = async (acc: any) => {
+  try {
+    // 1. 弹出确认框
+    await ElMessageBox.confirm(
+      `确定要删除账号 "${acc.account_name}" 吗？\n删除后相关的发布记录也会被清除！`, 
+      '高风险操作', 
+      {
+        confirmButtonText: '确定删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+      }
+    )
+
+    // 2. 发送请求
+    console.log(`正在请求删除账号 ID: ${acc.id}...`)
+    const res: any = await accountApi.delete(acc.id)
+
+    // 3. 判断结果
+    if (res.success) {
+      ElMessage.success('账号已成功删除')
+      await loadAccounts() // 重新加载列表
+    } else {
+      ElMessage.error(res.message || '删除失败，服务端拒绝')
+    }
+
+  } catch (e: any) {
+    // 4. 区分是“用户取消”还是“报错”
+    if (e === 'cancel') {
+      console.log('用户取消删除')
+    } else {
+      console.error('删除接口报错:', e)
+      // 获取更详细的错误信息
+      const errorMsg = e.response?.data?.detail || e.message || '未知错误'
+      ElMessage.error(`删除失败: ${errorMsg}`)
+    }
   }
 }
 
-const toggleSelection = (id: number) => {
-  accountStore.toggleAccountSelection(id)
+const resetForm = () => {
+  if (pollTimer.value) clearInterval(pollTimer.value)
+  authStep.value = false
+  loading.value = false
 }
 
-// 工具方法
-const getPlatformColor = (platform: string) => {
-  return PLATFORMS[platform]?.color || '#666'
-}
+// 工具函数
+const getPlatformName = (p: string) => ({ zhihu:'知乎', baijiahao:'百家号', toutiao:'头条', sohu:'搜狐' }[p] || p)
 
-const getPlatformCode = (platform: string) => {
-  return PLATFORMS[platform]?.code || '?'
-}
-
-const getPlatformName = (platform: string) => {
-  return PLATFORMS[platform]?.name || platform
-}
-
-const getStatusClass = (status: number) => {
-  return {
-    'status-active': status === 1,
-    'status-inactive': status === 0,
-    'status-expired': status === -1,
-  }
-}
+onMounted(loadAccounts)
+onUnmounted(resetForm)
 </script>
 
 <style scoped lang="scss">
-.account-list-page {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
+.account-list-page { padding: 20px; display: flex; flex-direction: column; gap: 20px; }
+.toolbar { display: flex; justify-content: space-between; }
 
-.toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-
-  .toolbar-left {
-    display: flex;
-    gap: 12px;
-  }
-}
-
-.accounts-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 20px;
-}
+.accounts-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
 
 .account-card {
-  background: var(--bg-secondary);
-  border: 2px solid transparent;
-  border-radius: 16px;
-  padding: 20px;
-  cursor: pointer;
-  transition: all 0.2s;
-  position: relative;
-
-  &:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
-  }
-
-  &.selected {
-    border-color: var(--primary);
-  }
-
+  background: var(--bg-secondary); border-radius: 12px; padding: 20px; position: relative; border: 1px solid var(--border);
+  transition: transform 0.2s;
+  &:hover { transform: translateY(-3px); box-shadow: 0 5px 15px rgba(0,0,0,0.2); }
+  
   &.add-card {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    border: 2px dashed var(--border);
-    min-height: 200px;
-
-    &:hover {
-      border-color: var(--primary);
-    }
-
-    .add-icon {
-      font-size: 48px;
-      color: var(--text-secondary);
-      margin-bottom: 12px;
-    }
-
-    p {
-      margin: 0;
-      color: var(--text-secondary);
-    }
-  }
-
-  .account-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 16px;
-
-    .platform-icon {
-      width: 48px;
-      height: 48px;
-      border-radius: 12px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 18px;
-      font-weight: 600;
-      color: white;
-    }
-
-    .status-dot {
-      width: 12px;
-      height: 12px;
-      border-radius: 50%;
-
-      &.status-active {
-        background: #4caf50;
-        box-shadow: 0 0 8px #4caf50;
-      }
-
-      &.status-inactive {
-        background: #9e9e9e;
-      }
-
-      &.status-expired {
-        background: #f44336;
-      }
-    }
-  }
-
-  .account-name {
-    margin: 0 0 4px 0;
-    font-size: 16px;
-    font-weight: 500;
-    color: var(--text-primary);
-  }
-
-  .account-username {
-    margin: 0 0 8px 0;
-    font-size: 14px;
-    color: var(--text-secondary);
-  }
-
-  .account-platform {
-    margin: 0 0 16px 0;
-    font-size: 12px;
-    color: var(--text-secondary);
-  }
-
-  .account-actions {
-    display: flex;
-    gap: 8px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    border: 2px dashed var(--border); cursor: pointer; color: var(--text-secondary);
+    &:hover { border-color: var(--primary); color: var(--primary); }
+    .add-icon { font-size: 32px; margin-bottom: 10px; }
   }
 }
 
-// 选择器样式覆盖
-:deep(.el-select) {
-  .el-input__wrapper {
-    background: var(--bg-tertiary);
-    border-color: var(--border);
-    box-shadow: none;
-
-    &:hover,
-    &.is-focus {
-      border-color: var(--primary);
-    }
+.account-header {
+  display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;
+  .platform-icon {
+    width: 40px; height: 40px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+    color: white; font-weight: bold; font-size: 18px;
+    &.zhihu { background: #0084FF; }
+    &.baijiahao { background: #2932e1; }
+    &.toutiao { background: #f85959; }
+    &.sohu { background: #ffc300; color: #000; }
+  }
+  .status-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    &.online { background: #67C23A; box-shadow: 0 0 5px #67C23A; }
+    &.offline { background: #909399; }
   }
 }
 
-:deep(.el-dialog) {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
+.account-name { margin: 0 0 5px 0; font-size: 16px; color: var(--text-primary); }
+.account-username { font-size: 13px; color: var(--text-secondary); margin-bottom: 5px; }
+.account-platform { font-size: 12px; color: var(--text-tertiary); margin-bottom: 15px; }
 
-  .el-dialog__header {
-    border-bottom: 1px solid var(--border);
-  }
+.account-actions {
+  display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--border); padding-top: 10px;
+}
 
-  .el-dialog__title {
-    color: var(--text-primary);
-  }
+.auth-step {
+  text-align: center; padding: 30px 0;
+  h3 { margin: 20px 0 10px; color: var(--text-primary); }
+  .sub-text { color: var(--text-secondary); font-size: 12px; }
 }
 </style>

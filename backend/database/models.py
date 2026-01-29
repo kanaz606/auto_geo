@@ -20,7 +20,7 @@ class Account(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     platform = Column(String(50), nullable=False, index=True)
     account_name = Column(String(100), nullable=False)
-    username = Column(String(100), nullable=True)
+    username = Column(String(100), nullable=True)  # 平台内的用户名
     cookies = Column(Text, nullable=True)
     storage_state = Column(Text, nullable=True)
     user_agent = Column(String(500), nullable=True)
@@ -30,9 +30,13 @@ class Account(Base):
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
+    # 🌟 关联关系：一个账号可以有多个发布记录
+    # cascade="all, delete-orphan" 确保在 Python 层面删除账号时，关联对象也被清理
+    publish_records = relationship("PublishRecord", back_populates="account", cascade="all, delete-orphan")
+
 
 class Article(Base):
-    """普通文章表"""
+    """普通文章表 (手动撰写)"""
     __tablename__ = "articles"
     __table_args__ = TABLE_ARGS
 
@@ -48,6 +52,9 @@ class Article(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     published_at = Column(DateTime, nullable=True)
 
+    # 关联关系
+    publish_records = relationship("PublishRecord", back_populates="article", cascade="all, delete-orphan")
+
 
 class PublishRecord(Base):
     """发布记录表"""
@@ -55,14 +62,20 @@ class PublishRecord(Base):
     __table_args__ = TABLE_ARGS
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    # 🌟 关键：ondelete="CASCADE" 确保数据库层面级联删除
     article_id = Column(Integer, ForeignKey("articles.id", ondelete="CASCADE"), nullable=False)
     account_id = Column(Integer, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
+
     publish_status = Column(Integer, default=0)
     platform_url = Column(String(500), nullable=True)
     error_msg = Column(Text, nullable=True)
     retry_count = Column(Integer, default=0)
     created_at = Column(DateTime, default=func.now())
     published_at = Column(DateTime, nullable=True)
+
+    # 关联关系
+    article = relationship("Article", back_populates="publish_records")
+    account = relationship("Account", back_populates="publish_records")
 
 
 # ==================== GEO相关表 ====================
@@ -82,6 +95,9 @@ class Project(Base):
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
+    # 关联关系：项目删除时，级联删除下的关键词
+    keywords = relationship("Keyword", back_populates="project", cascade="all, delete-orphan")
+
 
 class Keyword(Base):
     """关键词表"""
@@ -95,9 +111,15 @@ class Keyword(Base):
     status = Column(String(20), default="active")
     created_at = Column(DateTime, default=func.now())
 
+    # 关联关系
+    project = relationship("Project", back_populates="keywords")
+    articles = relationship("GeoArticle", back_populates="keyword", cascade="all, delete-orphan")
+    question_variants = relationship("QuestionVariant", back_populates="keyword", cascade="all, delete-orphan")
+    index_records = relationship("IndexCheckRecord", back_populates="keyword", cascade="all, delete-orphan")
+
 
 class QuestionVariant(Base):
-    """问题变体表（🌟 补回此表）"""
+    """问题变体表"""
     __tablename__ = "question_variants"
     __table_args__ = TABLE_ARGS
 
@@ -106,9 +128,12 @@ class QuestionVariant(Base):
     question = Column(Text, nullable=False)
     created_at = Column(DateTime, default=func.now())
 
+    # 关联关系
+    keyword = relationship("Keyword", back_populates="question_variants")
+
 
 class IndexCheckRecord(Base):
-    """收录检测记录表（🌟 补回此表）"""
+    """收录检测记录表"""
     __tablename__ = "index_check_records"
     __table_args__ = TABLE_ARGS
 
@@ -120,6 +145,9 @@ class IndexCheckRecord(Base):
     keyword_found = Column(Boolean, nullable=True)
     company_found = Column(Boolean, nullable=True)
     check_time = Column(DateTime, default=func.now())
+
+    # 关联关系
+    keyword = relationship("Keyword", back_populates="index_records")
 
 
 class GeoArticle(Base):
@@ -149,6 +177,7 @@ class GeoArticle(Base):
     retry_count = Column(Integer, default=0)
     error_msg = Column(Text, nullable=True)
     publish_logs = Column(Text, nullable=True)
+    platform_url = Column(String(500), nullable=True)  # 发布成功后的链接
 
     # 效果监测
     index_status = Column(String(20), default="uncheck")
@@ -158,6 +187,9 @@ class GeoArticle(Base):
     # 时间戳
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    # 关联关系
+    keyword = relationship("Keyword", back_populates="articles")
 
 
 # ==================== 知识库相关表 ====================
@@ -173,6 +205,8 @@ class KnowledgeCategory(Base):
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
+    items = relationship("Knowledge", back_populates="category", cascade="all, delete-orphan")
+
 
 class Knowledge(Base):
     __tablename__ = "knowledge_items"
@@ -186,8 +220,8 @@ class Knowledge(Base):
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
+    category = relationship("KnowledgeCategory", back_populates="items")
 
-# backend/database/models.py (追加)
 
 class ScheduledTask(Base):
     """

@@ -1,38 +1,55 @@
 # -*- coding: utf-8 -*-
 """
-数据库连接管理
-写的东西，简单但够用！
+数据库连接管理 - 工业级加固版
+支持 WAL 模式，解决 SQLite 并发锁问题
 """
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from typing import Generator
+from loguru import logger
+from sqlalchemy import inspect
 
 from backend.config import DATABASE_DIR, DATABASE_URL
 
-# 确保数据库目录存在
-DATABASE_DIR.mkdir(exist_ok=True)
+# 1. 确保数据库目录存在
+DATABASE_DIR.mkdir(exist_ok=True, parents=True)
 
-# 创建引擎
+# 2. 创建引擎
+# connect_args={"check_same_thread": False} 是 SQLite 在多线程环境下运行的必要参数
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False},  # SQLite特有配置
-    echo=False,  # 生产环境设为False
-    pool_pre_ping=True,  # 连接健康检查
+    connect_args={"check_same_thread": False},
+    echo=False,  # 开启后可查看所有 SQL 语句，开发调试时有用
+    pool_pre_ping=True,  # 每次使用连接前检查是否可用
 )
 
-# 创建会话工厂
+
+# 3. 🌟 核心优化：开启 SQLite 的 WAL 模式
+# 这样可以实现“读写不冲突”，极大减少 "database is locked" 错误
+@event.listens_for(engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA foreign_keys=ON")  # 显式开启外键约束支持
+        cursor.close()
+    except Exception as e:
+        logger.error(f"设置 SQLite Pragma 失败: {e}")
+
+
+# 4. 创建会话工厂
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# 基类
+# 5. 基类
 Base = declarative_base()
 
 
 def get_db() -> Generator[Session, None, None]:
     """
-    获取数据库会话的依赖注入函数
-    注意：用完自动关闭，！
+    FastAPI 依赖注入：获取数据库会话
     """
     db = SessionLocal()
     try:
@@ -44,34 +61,35 @@ def get_db() -> Generator[Session, None, None]:
 def init_db():
     """
     初始化数据库表
-    注意：第一次运行时调用！
+    逻辑：导入所有模型 -> 检查已存在的表 -> 创建新表
     """
-    from .models import (
+    # 必须在这里导入模型，否则 Base.metadata 不知道有哪些表
+    from backend.database.models import (
         Account, Article, PublishRecord,
         Project, Keyword, QuestionVariant,
-        IndexCheckRecord, GeoArticle
-    )  # noqa: F401
-    from loguru import logger
-    from sqlalchemy import inspect
+        IndexCheckRecord, GeoArticle,
+        ScheduledTask, KnowledgeCategory, Knowledge  # 🌟 补齐了之前遗漏的表
+    )
 
-    # 获取已存在的表
+    # 获取已存在的表名用于对比
     inspector = inspect(engine)
     existing_tables = inspector.get_table_names()
 
-    # 创建所有表（SQLAlchemy会自动处理外键依赖顺序）
     try:
-        Base.metadata.create_all(bind=engine, checkfirst=True)
-        logger.info("数据库表创建完成")
-    except Exception as e:
-        error_str = str(e).lower()
-        if "already exists" in error_str:
-            logger.info(f"部分表已存在，继续创建")
+        # checkfirst=True 会自动处理“表已存在”的情况
+        Base.metadata.create_all(bind=engine)
 
-    # 输出创建结果
-    inspector = inspect(engine)
-    all_tables = inspector.get_table_names()
-    for table in all_tables:
-        if table not in existing_tables:
-            logger.info(f"表 {table} 创建成功")
-        else:
-            logger.info(f"表 {table} 已存在")
+        # 再次获取所有表名，对比输出日志
+        all_tables = inspect(engine).get_table_names()
+
+        for table in all_tables:
+            if table not in existing_tables:
+                logger.info(f"✨ 新表创建成功: {table}")
+            else:
+                # logger.debug(f"表 {table} 已存在，跳过创建")
+                pass
+
+        logger.success("✅ 数据库初始化检查完成，WAL 模式已就绪")
+    except Exception as e:
+        logger.error(f"❌ 数据库初始化失败: {str(e)}")
+        raise e

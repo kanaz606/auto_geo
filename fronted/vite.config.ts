@@ -25,17 +25,29 @@ export default defineConfig({
     },
   },
   server: {
-    host: '127.0.0.1', // 修复：强制 IPv4，Electron 才能连上
+    // 🌟 修复点 1：将 host 设为 0.0.0.0 以获得更好的本地兼容性
+    host: '0.0.0.0', 
     port: 5173,
-    strictPort: true, // 修复：端口被占用时报错而不是跳到下一个
+    strictPort: true, 
     proxy: {
+      // 🌟 修复点 2：优化 API 代理配置
       '/api': {
-        target: 'http://127.0.0.1:8001',
+        target: 'http://127.0.0.1:8001', // 确保指向 FastAPI 的实际端口
         changeOrigin: true,
+        secure: false,
+        // 🌟 修复点 3：显式指定路径改写规则
+        // 我们的后端接口本身就带 /api 前缀，所以这里确保路径原封不动传递
+        rewrite: (path) => path.replace(/^\/api/, '/api'),
+        // 🌟 修复点 4：增加超时限制
+        // 因为 AI 生成文章可能需要很久，防止 Vite 代理提前断开连接
+        timeout: 600000, 
+        proxyTimeout: 600000,
       },
+      // 🌟 修复点 5：优化 WebSocket 代理
       '/ws': {
         target: 'ws://127.0.0.1:8001',
         ws: true,
+        changeOrigin: true,
       },
     },
   },
@@ -46,11 +58,8 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
-          // Vue 核心库
           'vue-vendor': ['vue', 'vue-router', 'pinia'],
-          // Element Plus UI 库
           'element-plus': ['element-plus', '@element-plus/icons-vue'],
-          // ECharts 图表库
           'echarts': ['echarts'],
         },
       },

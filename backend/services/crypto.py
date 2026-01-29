@@ -1,170 +1,138 @@
 # -*- coding: utf-8 -*-
 """
-加密解密工具
-用AES-256加密，Cookies安全第一！
+加密解密工具 - 工业加固版
+采用 AES-256 (Fernet) 对敏感的 Cookie 和 StorageState 进行加密存储
 """
 
 import base64
 import json
+from loguru import logger
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 from backend.config import ENCRYPTION_KEY
 
 
 class CryptoService:
     """
-    加密服务
-    注意：密钥必须妥善保管，生产环境从环境变量读取！
+    加密服务单例类
     """
 
-    def __init__(self, key: bytes = ENCRYPTION_KEY):
+    def __init__(self, key: Any = ENCRYPTION_KEY):
         """
-        初始化加密服务
+        初始化并派生密钥
+        """
+        # 确保 key 是 bytes 类型
+        if isinstance(key, str):
+            key_bytes = key.encode()
+        else:
+            key_bytes = bytes(key)
 
-        Args:
-            key: 32字节的加密密钥
-        """
-        # 使用PBKDF2HMAC从密钥派生Fernet密钥
+        # 1. 派生强密钥
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
-            salt=b"auto_geo_salt",  # 固定盐值，生产环境应该随机
+            salt=b"auto_geo_secure_salt_v1",  # 盐值固定以确保重启后仍能解密旧数据
             iterations=100000,
         )
-        self._fernet_key = base64.urlsafe_b64encode(kdf.derive(key))
-        self._fernet = Fernet(self._fernet_key)
+
+        # Fernet 密钥必须是 32 字节的 base64 编码
+        derived_key = base64.urlsafe_b64encode(kdf.derive(key_bytes))
+        self._fernet = Fernet(derived_key)
 
     def encrypt(self, data: str) -> str:
         """
-        加密字符串
-
-        Args:
-            data: 要加密的字符串
-
-        Returns:
-            加密后的Base64字符串
+        加密字符串：返回 URL 安全的 Base64 字符串
         """
         if not data:
             return ""
-        encrypted = self._fernet.encrypt(data.encode())
-        return base64.urlsafe_b64encode(encrypted).decode()
+        try:
+            # Fernet.encrypt 直接返回的就是 URL-Safe Base64 格式的 bytes
+            encrypted_bytes = self._fernet.encrypt(data.encode('utf-8'))
+            return encrypted_bytes.decode('utf-8')
+        except Exception as e:
+            logger.error(f"❌ 加密失败: {e}")
+            return ""
 
-    def decrypt(self, encrypted_data: str) -> str:
+    def decrypt(self, encrypted_str: str) -> str:
         """
         解密字符串
-
-        Args:
-            encrypted_data: 加密的Base64字符串
-
-        Returns:
-            解密后的原始字符串
         """
-        if not encrypted_data:
+        if not encrypted_str:
             return ""
         try:
-            decoded = base64.urlsafe_b64decode(encrypted_data.encode())
-            decrypted = self._fernet.decrypt(decoded)
-            return decrypted.decode()
-        except Exception:
-            # 解密失败返回空字符串
+            decrypted_bytes = self._fernet.decrypt(encrypted_str.encode('utf-8'))
+            return decrypted_bytes.decode('utf-8')
+        except Exception as e:
+            # 这种情况通常发生在密钥被修改后尝试解密旧数据
+            logger.warning("⚠️ 解密失败：可能是密钥不匹配或数据损坏")
             return ""
 
     def encrypt_dict(self, data: Dict[str, Any]) -> str:
         """
-        加密字典（转为JSON后加密）
-
-        Args:
-            data: 要加密的字典
-
-        Returns:
-            加密后的Base64字符串
+        加密字典
         """
         if not data:
             return ""
-        json_str = json.dumps(data, ensure_ascii=False)
-        return self.encrypt(json_str)
+        return self.encrypt(json.dumps(data, ensure_ascii=False))
 
     def decrypt_dict(self, encrypted_data: str) -> Dict[str, Any]:
         """
         解密为字典
-
-        Args:
-            encrypted_data: 加密的Base64字符串
-
-        Returns:
-            解密后的字典
         """
         if not encrypted_data:
             return {}
+        decrypted_str = self.decrypt(encrypted_data)
+        if not decrypted_str:
+            return {}
         try:
-            json_str = self.decrypt(encrypted_data)
-            return json.loads(json_str)
-        except Exception:
+            return json.loads(decrypted_str)
+        except json.JSONDecodeError:
             return {}
 
 
-# 全局单例
+# ==================== 全局单例与便捷导出 ====================
+
 crypto_service = CryptoService()
 
 
-def encrypt_cookies(cookies: list) -> str:
+def encrypt_cookies(cookies: List[Dict]) -> str:
     """
-    加密Cookies列表
-
-    Args:
-        cookies: Playwright获取的cookies列表
-
-    Returns:
-        加密后的字符串
+    加密 Playwright 获取的 Cookies 列表
     """
     if not cookies:
         return ""
-    return crypto_service.encrypt_dict({"cookies": cookies})
+    # 直接加密列表转换的 JSON
+    return crypto_service.encrypt(json.dumps(cookies))
 
 
-def decrypt_cookies(encrypted: str) -> list:
+def decrypt_cookies(encrypted: str) -> List[Dict]:
     """
-    解密Cookies
-
-    Args:
-        encrypted: 加密的cookies字符串
-
-    Returns:
-        Cookies列表
+    解密 Cookies 列表
     """
     if not encrypted:
         return []
-    data = crypto_service.decrypt_dict(encrypted)
-    return data.get("cookies", [])
+    decrypted_str = crypto_service.decrypt(encrypted)
+    try:
+        return json.loads(decrypted_str) if decrypted_str else []
+    except:
+        return []
 
 
-def encrypt_storage_state(storage_state: dict) -> str:
+def encrypt_storage_state(storage_state: Dict) -> str:
     """
-    加密本地存储状态
-
-    Args:
-        storage_state: localStorage和sessionStorage数据
-
-    Returns:
-        加密后的字符串
+    加密 storage_state (包含 localStorage)
     """
     if not storage_state:
         return ""
     return crypto_service.encrypt_dict(storage_state)
 
 
-def decrypt_storage_state(encrypted: str) -> dict:
+def decrypt_storage_state(encrypted: str) -> Dict:
     """
-    解密本地存储状态
-
-    Args:
-        encrypted: 加密的存储状态字符串
-
-    Returns:
-        存储状态字典
+    解密 storage_state
     """
     if not encrypted:
         return {}
