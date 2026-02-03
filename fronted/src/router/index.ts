@@ -19,6 +19,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '首页', icon: 'House' }, // 原来的概览改为首页，避免名字冲突
       },
       {
+        path: 'data-report',
+        name: 'DataReport',
+        component: () => import('@/views/report/DataReport.vue'),
+        meta: { title: '数据报表', icon: 'DataAnalysis' },
+      },
+      {
         path: 'accounts',
         name: 'Accounts',
         component: () => import('@/views/account/AccountList.vue'),

@@ -1,6 +1,5 @@
 # ==================== Claude 配置 ====================
 .claude/
-
 # ==================== Python ====================
 __pycache__/
 *.py[cod]
@@ -112,3 +111,12 @@ release/
 scripts/*.js
 scripts/*.py
 *.bat
+scripts/mock_n8n_server.py
+scripts/generate_data.py
+
+# 忽略 IDE 配置目录 .trae/（整个目录及其下所有文件）
+.trae/
+
+# 忽略 backend/database/ 目录下的 .db-shm 和 .db-wal 后缀的数据库临时文件
+backend/database/*.db-shm
+backend/database/*.db-wal
