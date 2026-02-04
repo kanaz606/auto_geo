@@ -370,17 +370,118 @@
 
 ## 数据报表
 
-### GET /api/reports/overview
-获取概览数据
+### GET /api/reports/stats
+获取数据总览卡片数据
 
-### GET /api/reports/trends
-获取趋势数据
+**查询参数**
+- `project_id` (可选): 项目ID筛选
+- `days` (可选): 时间范围天数，默认7天
 
-### GET /api/reports/platforms
-获取平台数据
+**响应**
+```json
+{
+  "total_articles": 15,
+  "common_articles": 5,
+  "geo_articles": 10,
+  "publish_success_rate": 85.5,
+  "publish_success_count": 13,
+  "publish_total_count": 15,
+  "keyword_hit_rate": 72.3,
+  "keyword_hit_count": 8,
+  "keyword_check_count": 11,
+  "company_hit_rate": 63.6,
+  "company_hit_count": 7,
+  "company_check_count": 11
+}
+```
 
-### GET /api/reports/projects
-获取项目数据
+### GET /api/reports/platform-comparison
+AI平台对比分析
+
+**查询参数**
+- `project_id` (可选): 项目ID筛选
+- `days` (可选): 时间范围天数，默认7天
+- `platform` (可选): 平台筛选（DeepSeek/豆包/通义千问）
+
+**响应**
+```json
+[
+  {
+    "platform": "DeepSeek",
+    "hit_count": 8,
+    "total_count": 11,
+    "hit_rate": 72.7
+  },
+  {
+    "platform": "豆包",
+    "hit_count": 6,
+    "total_count": 10,
+    "hit_rate": 60.0
+  },
+  {
+    "platform": "通义千问",
+    "hit_count": 7,
+    "total_count": 12,
+    "hit_rate": 58.3
+  }
+]
+```
+
+### GET /api/reports/project-leaderboard
+项目影响力排行榜
+
+**查询参数**
+- `days` (可选): 时间范围天数，默认7天
+
+**响应**
+```json
+[
+  {
+    "rank": 1,
+    "project_name": "SEO优化项目",
+    "company_name": "示例科技公司",
+    "content_volume": 25,
+    "ai_mention_rate": 85.5,
+    "brand_relevance": 85.5
+  },
+  {
+    "rank": 2,
+    "project_name": "品牌推广",
+    "company_name": "推广公司",
+    "content_volume": 18,
+    "ai_mention_rate": 72.3,
+    "brand_relevance": 72.3
+  }
+]
+```
+
+### GET /api/reports/content-analysis
+高贡献内容分析
+
+**查询参数**
+- `project_id` (可选): 项目ID筛选
+- `days` (可选): 时间范围天数，默认7天
+- `platform` (可选): 平台筛选
+
+**响应**
+```json
+[
+  {
+    "rank": 1,
+    "title": "如何优化AI搜索引擎收录",
+    "platform": "DeepSeek",
+    "ai_contribution": 90.0,
+    "publish_time": "2026-02-03 14:30"
+  },
+  {
+    "rank": 2,
+    "title": "GEO内容生成策略",
+    "platform": "豆包",
+    "ai_contribution": 90.0,
+    "publish_time": "2026-02-02 10:15"
+  }
+]
+```
 
 ---
 
@@ -425,6 +526,14 @@ WebSocket 连接端点
 ---
 
 ## 更新日志
+
+### v2.9.0 (2026-02-04)
+- ✅ 新增数据报表完整功能
+- ✅ `/api/reports/stats` - 数据总览卡片
+- ✅ `/api/reports/platform-comparison` - AI平台对比分析
+- ✅ `/api/reports/project-leaderboard` - 项目影响力排行榜
+- ✅ `/api/reports/content-analysis` - 高贡献内容分析
+- ✅ 所有接口支持项目、时间、平台筛选
 
 ### v2.2.0 (2025-01-26)
 - ✅ 更换富文本编辑器为 WangEditor 5
