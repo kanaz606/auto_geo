@@ -38,7 +38,7 @@ from backend.services.n8n_service import get_n8n_service
 # 导入路由
 from backend.api import (
     account, article, publish, keywords, geo,
-    index_check, reports, notifications, scheduler, knowledge
+    index_check, reports, notifications, scheduler, knowledge, article_collection
 )
 
 
